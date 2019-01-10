@@ -6,9 +6,11 @@
 '''
 
 
-import random, copy
-from timeit import timeit
+import random
+
 from music21 import *
+import numpy as np
+from scipy.stats import entropy
 
 
 class CounterPoint:
@@ -84,43 +86,43 @@ class CounterPoint:
                         else:
                             next_note.append(nn)
             mel[n]=random.choice(next_note)
-        #test_mel = self.check_melody(mel=mel, mode=mode,
-        #                             zenith_threshold=zenith_threshold,
-        #                             nadir_threshold=nadir_threshold)
+        while self.check_melody(mel=mel, mode=mode,
+                                zenith_threshold=zenith_threshold, nadir_threshold=nadir_threshold) is False:
+            mel = self.melody_maker()
         return mel
 
 
     def check_melody(self, mel, mode='ionian', zenith_threshold=1, nadir_threshold=1):
         if mel[0] != mel[-1]:
-            print('it was the first and last note')
+            # print('it was the first and last note')
             return False
         elif mel[-2]%12 not in self.pc_modes[mode][-1]:
-            print('penultimate')
+            # print('penultimate')
             return False
         for x in range(1, len(mel)):
             if mel[x - 1] == mel[x]:
-                print('consecutive', mel[x-1], mel[x])
+                # print('consecutive', mel[x-1], mel[x])
                 return False
 
             interval = abs(mel[x] - mel[x - 1])
 
 
             if interval in range(10, 12) or interval > 12:
-                print('leap too big', mel[x], mel[x-1], interval)
+                # print('leap too big', mel[x], mel[x-1], interval)
                 return False
             elif interval == 6:
-                print('tritone')
+                # print('tritone')
                 return False
             elif mel[x] % 12 not in self.diatonic_pcs and mel[x] - mel[x - 1] == 3:
                 # print(mel[x]%12, mel[x-1]%12, mel[x] - mel[x-1])
-                print('augmented second')
+                # print('augmented second')
                 return False
             elif mel[x] % 12 not in self.diatonic_pcs and abs(mel[x] - mel[x - 1]) % 12 > 4:
-                print('leap into dissonance', mel[x] % 12, mel[x - 1] % 12, abs(mel[x] - mel[x - 1]) % 12)
+                # print('leap into dissonance', mel[x] % 12, mel[x - 1] % 12, abs(mel[x] - mel[x - 1]) % 12)
                 return False
             elif x != len(mel):
                 if interval > 4 and abs(mel[x+1] - mel[x]) > 4:
-                    print('too leap-y')
+                    # print('too leap-y')
                     return False
         zenith = 0
         nadir = 0
@@ -130,99 +132,131 @@ class CounterPoint:
             elif x == min(mel):
                 nadir += 1
         if nadir > nadir_threshold:
-            print('it was the nadir', min(mel), nadir)
+            # print('it was the nadir', min(mel), nadir)
             return False
         if zenith > zenith_threshold:
-            print('it was the zenith', max(mel), zenith)
+            # print('it was the zenith', max(mel), zenith)
             return False
         # self.melody.append(mel)
         return True
 
     def counterpoint_checker(self, cf, cpt):
         all_intervals = []
-        for n in range(len(cpt) - 1):
-            interval = cpt[n] - cf[n]
-            all_intervals.append(interval)
-            p_interval = cpt[n + 1] - cf[n + 1]
-            if interval >= 20 or interval < 0:  # range issues
-                print('range issues', interval)
-                return False
-            elif interval % 12 in self.illegal_intervals:  # illegal harmonic interval
-                print('illegal interval', interval, interval % 12)
-                return False
-            elif interval == 7 and p_interval == 7:  # parallel fifths
-                print('consecutive fifths', interval, p_interval)
-                return False
-            elif p_interval in self.perfect_intervals and cpt[n] - cpt[n - 1] > 2 and cf[n] - cf[n - 1] > 2:
-                print('direct perfects')
-                return False
-            elif p_interval in self.perfect_intervals and cpt[n - 1] - cpt[n] > 2 and cf[n - 1] - cf[n] > 2:
-                print('direct perfects')
-                return False
-        print('checking thirds')
+        score_dict = {'distance': 0, 'style': 0, 'melodic_entropy': 0, 'harmonic_entropy': 0}
+        
+        intervals = np.array(cpt) - np.array(cf)
+
         thirds_counter = 0
         sixths_counter = 0
-        for n in range(len(cpt)):
-            interval = (cpt[n] - cf[n]) % 12
+        upward_motion = 0
+        downward_motion = 0
+        #check first octave
+        if intervals[0] % 12 != 0:
+            score_dict['distance'] = 0
+            return False, score_dict
+
+        score_dict['distance'] += 1
+
+        if len(cf) < 2:
+            return True, score_dict
+
+        #check intervals
+        interval_step = 0
+        for interval, cpt_note, cf_note in zip(intervals[1:], cpt[1:], cf[1:]):
+            # print(interval_step, interval)
+            prev_interval = intervals[interval_step]
+            if interval >= 20 or interval < 0:  # range issues
+                # print('range issues', interval)
+                return False, score_dict
+            elif interval % 12 in self.illegal_intervals:  # illegal harmonic interval
+                # print('illegal interval', interval, interval % 12)
+                return False, score_dict
+            elif interval in self.perfect_intervals and prev_interval in self.perfect_intervals:  # parallel perfects
+                # print('consecutive perfects', interval, prev_interval)
+                return False, score_dict
+            elif interval % 12 == 7 and prev_interval % 12 == 7:  # parallel fifths
+                # print('consecutive fifths', interval, prev_interval)
+                return False, score_dict
+            elif interval % 12 == 0 and prev_interval % 12 == 0:  # parallel octaves
+                # print('consecutive fifths', interval, prev_interval)
+                return False, score_dict
+            elif prev_interval in self.perfect_intervals \
+                    and cpt_note - cpt[interval_step] > 2 \
+                    and cf_note - cf[interval_step] > 2:
+                # print('direct perfects')
+                return False, score_dict
             if interval in self.thirds:
                 thirds_counter += 1
                 if thirds_counter >= 4:
-                    print('too many thirds')
-                    return False
+                    # print('too many thirds')
+                    return False, score_dict
             else:
                 thirds_counter = 0
             if interval in self.sixths:
                 sixths_counter += 1
                 if sixths_counter >= 4:
-                    print('too many sixths')
-                    return False
+                    # print('too many sixths')
+                    return False, score_dict
             else:
                 sixths_counter = 0
-        upward_motion = 0
-        downward_motion = 0
-        for n in range(1, len(cpt)):
-            if cpt[n] > cpt[n - 1] and cf[n] > cf[n - 1]:  # no contrary motion
+            if cpt_note > cpt[interval_step] and cf_note > cf[interval_step]:  # no contrary motion
                 upward_motion += 1
                 downward_motion = 0
             if upward_motion > 3:
-                print('upward motion')
-                return False
-            elif cpt[n] < cpt[n - 1] and cf[n] < cf[n - 1]:
+                # print('upward motion')
+                return False, score_dict
+            elif cpt_note < cpt[interval_step] and cf_note < cf[interval_step]:
                 upward_motion = 0
                 downward_motion += 1
             if downward_motion > 3:
-                print('downward motion')
-                return False
-        for n in range(1, len(cpt)):  # leap in same direction
-            if cpt[n - 1] - cpt[n] > 3 and cf[n - 1] - cf[n] > 3:
-                print('leap same direction')
-                return False
-            elif cpt[n] - cpt[n - 1] > 3 and cf[n] - cf[n - 1] > 3:
-                print('leap same direction')
-                return False
+                # print('downward motion')
+                return False, score_dict
+            # leap in same direction
+            if cpt[interval_step] - cpt_note > 3 and cf[interval_step] - cf_note > 3:
+                # print('leap same direction')
+                return False, score_dict
+            elif cpt_note - cpt[interval_step] > 3 and cf_note - cf[interval_step] > 3:
+                # print('leap same direction')
+                return False, score_dict
+
+            score_dict['distance'] += 1
+            interval_step += 1
+            
+        if len(cpt) != len(cf):
+            score_dict['melodic_entropy'] = entropy(cpt) / len(cpt)
+            score_dict['harmonic_entropy'] = entropy(intervals) / len(intervals)
+            return True, score_dict
         if abs(cf[-2] - cf[-1]) > 2 and abs(cpt[-2] - cpt[-1]) > 2:  # cadence
-            print('cadence intervals')
-            return False
+            # print('cadence intervals')
+            return False, score_dict
         elif abs(cf[-2] - cf[-1]) > 7 or abs(cpt[-2] - cpt[-1]) > 7:
-            print('cadence intervals')
-            return False
+            # print('cadence intervals')
+            return False, score_dict
+        
+        #check cross relations at cadence
         elif cf[-2] % 12 in self.chromatic_pcs and cpt[-3] % 12 == cf[-2] % 12 - 1:  # cross relations
-            print('cross relation')
-            return False
+            # print('cross relation')
+            return False, score_dict
         elif cpt[-2] % 12 in self.chromatic_pcs and cf[-3] % 12 == cpt[-2] % 12 - 1:
-            print('cross relation')
-            return False
+            # print('cross relation')
+            return False, score_dict
         elif cf[-2] % 12 in self.chromatic_pcs and cf[-3] % 12 == cf[-2] % 12 - 1:  # cross relations
-            print('cross relation')
-            return False
+            # print('cross relation')
+            return False, score_dict
         elif cpt[-2] % 12 in self.chromatic_pcs and cpt[-3] % 12 == cpt[-2] % 12 - 1:
-            print('cross relation')
-            return False
-        for a, b in zip(cf[1:-1], cpt[1:-1]):
-            if abs(a - b) % 12 == 0:
-                print('octave in middle')
-                return False
-        return True
+            # print('cross relation')
+            return False, score_dict
+        
+        #check final octave
+        if intervals[-1] % 12 != 0:
+            score_dict['distance'] -= 1
+            return False, score_dict
+        # if 0 in intervals[1:-1]:
+        #     score_dict['distance'] = np.where(intervals[1:-1] == 0)[0][0]
+        #     return False, score_dict
+        score_dict['melodic_entropy'] = entropy(cpt) / len(cpt)
+        score_dict['harmonic_entropy'] = entropy(intervals) / len(intervals)
+        return True, score_dict
 
     def make_counterpoint(self, length=6, mode='ionian',
                           cf_clef='bass', cpt_clef='treble',
@@ -233,11 +267,23 @@ class CounterPoint:
         cf = self.melody_maker(length=length, mode=mode, clef=cf_clef,
                                zenith_threshold=zenith_threshold,
                                nadir_threshold=nadir_threshold)
+
+        # while self.check_melody(cpt) is False:
+        #     cpt = self.melody_maker(length=length, mode=mode, clef=cf_clef,
+        #                            zenith_threshold=zenith_threshold,
+        #                            nadir_threshold=nadir_threshold)
+        #
+        # while self.check_melody(cf) is False:
+        #     cf = self.melody_maker(length=length, mode=mode, clef=cf_clef,
+        #                            zenith_threshold=zenith_threshold,
+        #                            nadir_threshold=nadir_threshold)
+
         if len(cf) != len(cpt):
             raise ValueError('Cantus and Counterpoint melodies must be the same length')
         trial_counterpoint = self.counterpoint_checker(cf=cf, cpt=cpt)
         cf_trial = 0
-        while trial_counterpoint is False:
+        while trial_counterpoint[0] is False:
+            print(trial_counterpoint)
             cf_trial += 1
             
             if cf_trial == 200:
@@ -262,6 +308,7 @@ class CounterPoint:
                 zenith_threshold = 1
                 nadir_threshold = 1
             trial_counterpoint = self.counterpoint_checker(cf=cf, cpt=cpt)
+            print(trial_counterpoint)
         return {'counterpoint': cpt, 'cantus': cf}
 
 
@@ -280,12 +327,8 @@ if __name__ == '__main__':
 
     C = CounterPoint()
 
-
     cantus = stream.Part(id='cantus')
     counterpoint = stream.Part(id='counterpoint')
-    C = CounterPoint()
-
-
 
     '''
     this is where you input what parameters you want
